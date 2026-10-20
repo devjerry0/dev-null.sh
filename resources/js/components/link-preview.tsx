@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
+import { GifEmbed } from '@/components/gif-embed';
 import { LinkEmbed } from '@/components/link-embed';
 import { Skeleton } from '@/components/ui/skeleton';
+import { isGifUrl } from '@/lib/gifs';
 import { hostname } from '@/lib/urls';
 import type { LinkPreview as LinkPreviewData } from '@/types';
 
@@ -124,6 +126,16 @@ export function LinkPreview({
             <LinkEmbed
                 preview={preview}
                 embed={preview.embed}
+                isStatic={isStatic}
+            />
+        );
+    }
+
+    if (isGifUrl(preview.url)) {
+        return (
+            <GifEmbed
+                key={preview.url}
+                preview={preview}
                 isStatic={isStatic}
             />
         );

@@ -44,6 +44,12 @@ A link card for a video, song or pen becomes a player that loads when clicked. T
 | `apple_music` | albums, playlists and songs |
 | `codepen` | pens |
 | `asciinema` | recordings |
+| `giphy` | `giphy.com/gifs/{id-or-slug-id}` and `giphy.com/embed/{id}` |
+| `gif` | Public HTTPS links whose path ends in `.gif` (case-insensitive) |
+
+GIFs load from their external host and autoplay while visible, with a **Stop** button. Reduced-motion users press **Play** to start them. There is no GIF search, provider API key, upload, conversion, or hosted copy. Giphy share links use its public media URLs; direct GIF links are verified by the existing protected link unfurler before playback. It requests only the first 32 bytes and stores the final URL, never the GIF file. Previously fetched direct GIF links need refetching to gain this metadata; this change does not backfill them.
+
+GIF embeds use the existing embed JSON fields with `kind: "gif"`; their `src` is an image URL, not an iframe URL. Clients that do not support this kind can keep showing the source link.
 
 | Variable | Default | |
 |---|---|---|

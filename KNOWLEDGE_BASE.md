@@ -225,6 +225,8 @@ URLs and bare domains in commits and replies become clickable links. Long URLs a
 
 Supported links can also show click-to-play embedded players: YouTube, Vimeo, Loom, Twitch, Spotify, SoundCloud, Apple Music, Suno, CodePen, and asciinema. Only the link that gets the card can show a player, so choosing no card means no player. Embeds depend on server configuration and the linked URL being supported. Third-party player content loads only after you press play; those providers have their own privacy policies. This is embedding a link, not uploading a video or audio file to /dev/null.
 
+Giphy GIF share links and public HTTPS links ending in `.gif` can show animated GIFs in the selected link card, including in replies and remotes. They load from the external host, autoplay while visible, and have a **Stop** button. With reduced motion enabled they wait for **Play**; static preview cards do not animate. Direct GIFs must pass the link unfurler's public-address, redirect, content-type, and GIF-header checks first. Failed previews keep a link to the source. There is no GIF search, API key, file upload, conversion, or hosted GIF storage. Administrators can enable only these embeds with `EMBEDS_PROVIDERS=giphy,gif`, or disable them with the existing embed controls. Previously fetched direct GIF links need refetching before they can animate; Giphy share links work without a backfill.
+
 Sources: [link rendering](resources/js/components/linkified-text.tsx), [link-card selection](app/Http/Requests/CreateCommitRequest.php), [embed configuration](config/embeds.php), [embedded player](resources/js/components/link-embed.tsx).
 
 ### Replies and threads

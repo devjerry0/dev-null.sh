@@ -32,6 +32,98 @@ beforeEach(function (): void {
     });
 });
 
+it('verifies external GIFs from a small header without storing their bytes', function (string $signature): void {
+    $options = [];
+    Http::fake(function (Request $request, array $sent) use (&$options, $signature): PromiseInterface {
+        $options = $sent;
+
+        return Http::response($signature."\x01\x00\x01\x00\x80\x00\x00", 206, ['Content-Type' => 'IMAGE/GIF; charset=binary']);
+    });
+
+    $preview = unfurl('https://example.com/cat.GIF?token=keep');
+
+    expect($preview->gif_url)->toBe('https://example.com/cat.GIF?token=keep')
+        ->and($preview->image_url)->toBeNull()
+        ->and($preview->fetched_at)->not->toBeNull()
+        ->and($options['progress'](1000, 32))->toBeFalse()
+        ->and($options['progress'](1000, 33))->toBeTrue();
+
+    Http::assertSent(fn (Request $request): bool => $request->header('Range') === ['bytes=0-31']
+        && $request->header('Accept') === ['image/gif']);
+})->with(['GIF87a', 'GIF89a']);
+
+it('does not trust a GIF extension or a content type without a valid header', function (string $body, string $contentType): void {
+    Http::fake(['https://example.com/*' => Http::response($body, 200, ['Content-Type' => $contentType])]);
+
+    expect(unfurl('https://example.com/cat.gif')->gif_url)->toBeNull();
+})->with([
+    'html' => ['<title>A page</title>', 'text/html'],
+    'spoofed type' => ['<script>alert(1)</script>', 'image/gif'],
+    'wrong type' => ["GIF89a\x01\x00\x01\x00\x80\x00\x00", 'image/png'],
+    'truncated' => ['GIF89a', 'image/gif'],
+    'wrong signature' => ["GIF90a\x01\x00\x01\x00\x80\x00\x00", 'image/gif'],
+    'zero width' => ["GIF89a\x00\x00\x01\x00\x80\x00\x00", 'image/gif'],
+    'zero height' => ["GIF89a\x01\x00\x00\x00\x80\x00\x00", 'image/gif'],
+]);
+
+it('keeps only the final public HTTPS GIF URL after redirects', function (): void {
+    Http::fake([
+        'https://example.com/cat.gif' => Http::response(status: 302, headers: ['Location' => 'https://www.example.com/media?id=cat']),
+        'https://www.example.com/media?id=cat' => Http::response("GIF89a\x01\x00\x01\x00\x80\x00\x00", 200, ['Content-Type' => 'image/gif']),
+    ]);
+
+    $preview = unfurl('https://example.com/cat.gif');
+
+    expect($preview->url)->toBe('https://example.com/cat.gif')
+        ->and($preview->gif_url)->toBe('https://www.example.com/media?id=cat');
+    Http::assertSentCount(2);
+});
+
+it('does not follow GIF redirects to unsafe destinations', function (string $destination): void {
+    Http::fake(['https://example.com/cat.gif' => Http::response(status: 302, headers: ['Location' => $destination])]);
+
+    expect(unfurl('https://example.com/cat.gif')->gif_url)->toBeNull();
+    Http::assertSentCount(1);
+})->with([
+    'downgrade' => 'http://www.example.com/cat.gif',
+    'private address' => 'https://10.0.0.1/cat.gif',
+    'private DNS' => 'https://internal.example.com/cat.gif',
+    'mixed DNS' => 'https://mixed.example.com/cat.gif',
+    'credentials' => 'https://user:secret@www.example.com/cat.gif',
+    'port' => 'https://www.example.com:8443/cat.gif',
+]);
+
+it('does not embed HTTP GIFs or treat a query string as a GIF path', function (string $url): void {
+    Http::fake(['*' => Http::response("GIF89a\x01\x00\x01\x00\x80\x00\x00", 200, ['Content-Type' => 'image/gif'])]);
+
+    expect(unfurl($url)->gif_url)->toBeNull();
+})->with([
+    'HTTP' => 'http://example.com/cat.gif',
+    'query' => 'https://example.com/page?image=cat.gif',
+]);
+
+it('does not keep oversized redirected GIF URLs', function (): void {
+    $destination = 'https://www.example.com/'.str_repeat('x', 2048);
+    Http::fake([
+        'https://example.com/cat.gif' => Http::response(status: 302, headers: ['Location' => $destination]),
+        $destination => Http::response("GIF89a\x01\x00\x01\x00\x80\x00\x00", 200, ['Content-Type' => 'image/gif']),
+    ]);
+
+    expect(unfurl('https://example.com/cat.gif')->gif_url)->toBeNull();
+});
+
+it('clears a previously verified GIF when refetching fails permanently', function (): void {
+    Http::fake(['https://example.com/cat.gif' => Http::response(status: 404)]);
+    $preview = LinkPreview::factory()->create([
+        'url' => 'https://example.com/cat.gif',
+        'gif_url' => 'https://example.com/old.gif',
+    ]);
+
+    resolve(UpdateLinkPreview::class)->handle($preview);
+
+    expect($preview->refresh()->gif_url)->toBeNull();
+});
+
 function unfurl(string $url): LinkPreview
 {
     $linkPreview = LinkPreview::factory()->create(['url' => $url]);

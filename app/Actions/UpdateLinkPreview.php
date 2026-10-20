@@ -70,32 +70,48 @@ final readonly class UpdateLinkPreview
      */
     public function handle(LinkPreview $linkPreview): void
     {
-        $linkPreview->update([...$this->fetchMetadata($linkPreview->url), 'fetched_at' => now()]);
+        $linkPreview->update(['gif_url' => null, ...$this->fetchMetadata($linkPreview->url), 'fetched_at' => now()]);
     }
 
     /**
      * Follows up to three redirects by hand, so that every hop goes through the same checks as the original URL.
      *
-     * @return array{title: string|null, description: string|null, image_url: string|null, site_name: string|null}
+     * @return array{title: string|null, description: string|null, image_url: string|null, site_name: string|null, gif_url?: string}
      */
     private function fetchMetadata(string $url): array
     {
         $page = Url::parse($url);
+        $isGif = $page?->getScheme() === 'https' && str_ends_with(mb_strtolower($page->getPath()), '.gif');
 
         for ($hop = 0; $hop <= self::MAX_REDIRECTS && $page instanceof Url; $hop++) {
             $address = $this->publicAddress($page);
 
-            if ($address === null) {
+            if ($address === null || ($isGif && $page->getScheme() !== 'https')) {
                 return self::NO_METADATA;
             }
 
-            $response = $this->get($page, $address);
+            $response = $this->get($page, $address, $isGif);
 
             if ($response->serverError() || $response->tooManyRequests()) {
                 $response->throw();
             }
 
             if (! $response->redirect()) {
+                if ($isGif && $response->successful()
+                    && mb_strtolower(mb_trim(Str::before($response->header('Content-Type'), ';'))) === 'image/gif'
+                    && mb_strlen($page->toAsciiString()) <= self::MAX_IMAGE_URL_LENGTH) {
+                    $header = $this->body($response);
+
+                    if (strlen($header) >= 13 && in_array(substr($header, 0, 6), ['GIF87a', 'GIF89a'], true)
+                        && substr($header, 6, 2) !== "\0\0" && substr($header, 8, 2) !== "\0\0") {
+                        return [...self::NO_METADATA, 'gif_url' => $page->toAsciiString()];
+                    }
+                }
+
+                if ($isGif) {
+                    return self::NO_METADATA;
+                }
+
                 return $response->successful() && $this->isHtml($response)
                     ? $this->parse($this->body($response), $page)
                     : self::NO_METADATA;
@@ -138,25 +154,29 @@ final readonly class UpdateLinkPreview
      * (by that limit or by the timeout) is still used, as metadata lives at the top of the page. English is asked for
      * explicitly, as sites such as YouTube otherwise pick the language from the server's location.
      */
-    private function get(Url $url, string $address): Response
+    private function get(Url $url, string $address, bool $isGif = false): Response
     {
         $port = $url->getPort() ?? ($url->getScheme() === 'https' ? 443 : 80);
 
         $request = Http::withUserAgent(sprintf('Mozilla/5.0 (compatible; devnull-linkpreview/1.0; +%s)', config()->string('app.url')))
-            ->accept('text/html')
+            ->accept($isGif ? 'image/gif' : 'text/html')
             ->withHeaders(['Accept-Language' => 'en-US,en;q=0.9'])
             ->connectTimeout(3)
             ->timeout(5)
             ->withoutRedirecting()
             ->withOptions([
                 'decode_content' => false,
-                'progress' => fn (int $expected, int $downloaded): bool => $downloaded > self::MAX_BODY_BYTES,
+                'progress' => fn (int $expected, int $downloaded): bool => $downloaded > ($isGif ? 32 : self::MAX_BODY_BYTES),
                 'curl' => [
                     CURLOPT_CONNECT_TO => [sprintf('::%s:%d', str_contains($address, ':') ? "[{$address}]" : $address, $port)],
                 ],
             ]);
 
         try {
+            if ($isGif) {
+                $request->withHeaders(['Range' => 'bytes=0-31']);
+            }
+
             return $request->get($url->toAsciiString());
         } catch (ConnectionException $connectionException) {
             $cutOff = $connectionException->getPrevious();
