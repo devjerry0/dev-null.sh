@@ -37,9 +37,11 @@ final readonly class Embeds
 
         $only = config()->array('embeds.only');
 
-        return $gifUrl !== null && ($only === [] || in_array('gif', $only, true))
-            ? Embed::gif('GIF', $gifUrl)
-            : null;
+        if ($gifUrl === null || ($only !== [] && ! in_array('gif', $only, true))) {
+            return null;
+        }
+
+        return Embed::gif('GIF', $gifUrl);
     }
 
     /**

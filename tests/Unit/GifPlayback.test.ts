@@ -3,30 +3,36 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { isGifPlaying, isGifUrl } from '../../resources/js/lib/gifs.ts';
 
-test('recognizes HTTPS GIF paths without interpreting query strings as filenames', () => {
-    for (const url of [
-        'https://example.com/animation.gif',
-        'https://example.com/animation.GIF?token=abc#frame',
-        'https://media2.giphy.com/media/cat/giphy.gif',
-        'https://example.com:443/cat.gif',
-    ]) {
-        assert.equal(isGifUrl(url), true, url);
-    }
+const validGifUrls = [
+    'https://example.com/animation.gif',
+    'https://example.com/animation.GIF?token=abc#frame',
+    'https://media2.giphy.com/media/cat/giphy.gif',
+    'https://example.com:443/cat.gif',
+];
 
-    for (const url of [
-        'not a URL',
-        'http://example.com/cat.gif',
-        'data:image/gif;base64,R0lGODlh',
-        'javascript:alert(1)',
-        'https://example.com/page?image=cat.gif',
-        'https://example.com/cat.gif/page',
-        'https://example.com/cat.gif.html',
-        'https://user:secret@example.com/cat.gif',
-        'https://example.com:8443/cat.gif',
-    ]) {
-        assert.equal(isGifUrl(url), false, url);
-    }
-});
+for (const url of validGifUrls) {
+    test(`recognizes a direct HTTPS GIF link: ${url}`, () => {
+        assert.equal(isGifUrl(url), true);
+    });
+}
+
+const invalidGifUrls = [
+    'not a URL',
+    'http://example.com/cat.gif',
+    'data:image/gif;base64,R0lGODlh',
+    'javascript:alert(1)',
+    'https://example.com/page?image=cat.gif',
+    'https://example.com/cat.gif/page',
+    'https://example.com/cat.gif.html',
+    'https://user:secret@example.com/cat.gif',
+    'https://example.com:8443/cat.gif',
+];
+
+for (const url of invalidGifUrls) {
+    test(`does not treat an unsupported link as a GIF: ${url}`, () => {
+        assert.equal(isGifUrl(url), false);
+    });
+}
 
 const playback = {
     playback: 'auto' as const,

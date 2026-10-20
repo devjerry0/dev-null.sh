@@ -1,145 +1,160 @@
 import { Play, Square } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
-import { useMediaQuery } from '@/hooks/use-media-query';
-import { isGifPlaying, type GifPlayback } from '@/lib/gifs';
+import { useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { useGifPlayback } from '@/hooks/use-gif-playback';
 import { hostname } from '@/lib/urls';
 import type { Embed, LinkPreview } from '@/types';
+
+type GifEmbedProps = {
+    preview: LinkPreview;
+    embed?: Embed | null;
+    isStatic?: boolean;
+};
+
+type GifPlaybackState = ReturnType<typeof useGifPlayback>;
+
+type GifMediaProps = {
+    preview: LinkPreview;
+    embed: Embed | null;
+    playback: GifPlaybackState;
+};
 
 export function GifEmbed({
     preview,
     embed = null,
     isStatic = false,
-}: {
-    preview: LinkPreview;
-    embed?: Embed | null;
-    isStatic?: boolean;
-}) {
-    const container = useRef<HTMLDivElement>(null);
-    const [isVisible, setIsVisible] = useState(false);
-    const [playback, setPlayback] = useState<GifPlayback>('auto');
-    const [hasFailed, setHasFailed] = useState(false);
-    const [posterFailed, setPosterFailed] = useState(false);
-    const reducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)');
-
-    useEffect(() => {
-        const element = container.current;
-
-        if (!element) {
-            return;
-        }
-
-        if (typeof IntersectionObserver === 'undefined') {
-            setIsVisible(true);
-
-            return;
-        }
-
-        const observer = new IntersectionObserver(
-            ([entry]) =>
-                setIsVisible(
-                    entry.isIntersecting && entry.intersectionRatio >= 0.1,
-                ),
-            { threshold: 0.1 },
-        );
-        observer.observe(element);
-
-        return () => observer.disconnect();
-    }, []);
-
-    const isPlaying =
-        embed !== null &&
-        isGifPlaying({
-            playback,
-            isVisible,
-            reducedMotion,
-            isStatic,
-            hasFailed,
-        });
-    const isWaiting = !embed && preview.is_pending;
-    const Icon = isPlaying ? Square : Play;
-    const details = (
-        <>
-            <span className="block truncate font-mono text-[13px] text-muted-foreground">
-                {embed?.provider ?? hostname(preview.url)}
-            </span>
-            <span className="block truncate text-[15px] leading-snug font-medium">
-                {preview.title ?? 'GIF'}
-            </span>
-        </>
-    );
+}: GifEmbedProps) {
+    const playback = useGifPlayback({ embed, isStatic });
 
     return (
         <div
-            ref={container}
+            ref={playback.container}
             onClick={isStatic ? undefined : (event) => event.stopPropagation()}
             className="mt-3 overflow-hidden rounded-lg border"
             data-test="gif-embed"
             data-provider={embed?.provider ?? 'GIF'}
         >
             <div className="relative mx-auto aspect-square w-full max-w-80 overflow-hidden bg-muted">
-                {isPlaying && embed ? (
-                    <img
-                        src={embed.src}
-                        alt={preview.title ?? 'Animated GIF'}
-                        referrerPolicy="no-referrer"
-                        onError={() => setHasFailed(true)}
-                        className="absolute inset-0 size-full object-contain"
-                        data-test="gif-animation"
-                    />
-                ) : (
-                    <>
-                        {embed?.poster && !posterFailed && !hasFailed && (
-                            <img
-                                src={embed.poster}
-                                alt=""
-                                loading="lazy"
-                                referrerPolicy="no-referrer"
-                                onError={() => setPosterFailed(true)}
-                                className="absolute inset-0 size-full object-contain"
-                                data-test="gif-poster"
-                            />
-                        )}
-                        <span
-                            className="absolute inset-0 flex items-center justify-center px-4 text-center text-sm text-muted-foreground"
-                            role={hasFailed ? 'status' : undefined}
-                        >
-                            {hasFailed
-                                ? 'GIF could not load'
-                                : isWaiting
-                                  ? 'Loading GIF…'
-                                  : !embed
-                                    ? 'GIF preview unavailable'
-                                    : !embed.poster || posterFailed
-                                      ? 'GIF'
-                                      : null}
-                        </span>
-                    </>
-                )}
-                {!isStatic && embed && !hasFailed && (
-                    <button
-                        type="button"
-                        onClick={() => setPlayback(isPlaying ? 'stop' : 'play')}
-                        aria-label={isPlaying ? 'Stop GIF' : 'Play GIF'}
-                        className="absolute right-3 bottom-3 flex min-w-20 cursor-pointer items-center justify-center gap-2 rounded-md bg-black/75 px-3 py-2 text-sm text-white focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-                        data-test="gif-playback"
-                    >
-                        <Icon className="size-4 fill-current" />
-                        {isPlaying ? 'Stop' : 'Play'}
-                    </button>
-                )}
+                <GifMedia preview={preview} embed={embed} playback={playback} />
+                <GifPlaybackButton
+                    embed={embed}
+                    playback={playback}
+                    isStatic={isStatic}
+                />
             </div>
-            {isStatic ? (
-                <div className="border-t px-3 py-2">{details}</div>
-            ) : (
-                <a
-                    href={preview.url}
-                    target="_blank"
-                    rel="noopener noreferrer nofollow ugc"
-                    className="block border-t px-3 py-2 transition-colors hover:bg-accent focus-visible:bg-accent"
-                >
-                    {details}
-                </a>
-            )}
+            <GifSource preview={preview} embed={embed} isStatic={isStatic} />
         </div>
+    );
+}
+
+function GifMedia({ preview, embed, playback }: GifMediaProps) {
+    const [posterFailed, setPosterFailed] = useState(false);
+
+    if (playback.isPlaying && embed) {
+        return (
+            <img
+                src={embed.src}
+                alt={preview.title ?? 'Animated GIF'}
+                referrerPolicy="no-referrer"
+                onError={playback.onError}
+                className="absolute inset-0 size-full object-contain"
+                data-test="gif-animation"
+            />
+        );
+    }
+
+    if (embed?.poster && !posterFailed && !playback.hasFailed) {
+        return (
+            <img
+                src={embed.poster}
+                alt=""
+                loading="lazy"
+                referrerPolicy="no-referrer"
+                onError={() => setPosterFailed(true)}
+                className="absolute inset-0 size-full object-contain"
+                data-test="gif-poster"
+            />
+        );
+    }
+
+    return <GifStatus preview={preview} embed={embed} playback={playback} />;
+}
+
+function GifStatus({ preview, embed, playback }: GifMediaProps) {
+    return (
+        <span
+            className="absolute inset-0 flex items-center justify-center px-4 text-center text-sm text-muted-foreground"
+            role={playback.hasFailed ? 'status' : undefined}
+        >
+            {playback.hasFailed && 'GIF could not load'}
+            {!playback.hasFailed && embed && 'GIF'}
+            {!playback.hasFailed && !embed && preview.is_pending && 'Loading GIF…'}
+            {!playback.hasFailed && !embed && !preview.is_pending &&
+                'GIF preview unavailable'}
+        </span>
+    );
+}
+
+function GifPlaybackButton({
+    embed,
+    playback,
+    isStatic,
+}: {
+    embed: Embed | null;
+    playback: GifPlaybackState;
+    isStatic: boolean;
+}) {
+    if (isStatic || !embed || playback.hasFailed) {
+        return null;
+    }
+
+    const Icon = playback.isPlaying ? Square : Play;
+    const label = playback.isPlaying ? 'Stop' : 'Play';
+
+    return (
+        <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={playback.onToggle}
+            aria-label={`${label} GIF`}
+            className="absolute right-3 bottom-3 min-w-20 cursor-pointer bg-black/75 text-white hover:bg-black/85"
+            data-test="gif-playback"
+        >
+            <Icon className="size-4 fill-current" />
+            {label}
+        </Button>
+    );
+}
+
+function GifSource({ preview, embed, isStatic }: GifEmbedProps) {
+    const details = <GifDetails preview={preview} embed={embed} />;
+
+    if (isStatic) {
+        return <div className="border-t px-3 py-2">{details}</div>;
+    }
+
+    return (
+        <a
+            href={preview.url}
+            target="_blank"
+            rel="noopener noreferrer nofollow ugc"
+            className="block border-t px-3 py-2 transition-colors hover:bg-accent focus-visible:bg-accent"
+        >
+            {details}
+        </a>
+    );
+}
+
+function GifDetails({ preview, embed }: GifEmbedProps) {
+    return (
+        <>
+            <span className="block truncate font-mono text-xs text-muted-foreground">
+                {embed?.provider ?? hostname(preview.url)}
+            </span>
+            <span className="block truncate text-sm leading-snug font-medium">
+                {preview.title ?? 'GIF'}
+            </span>
+        </>
     );
 }

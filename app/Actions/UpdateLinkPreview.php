@@ -6,12 +6,11 @@ namespace App\Actions;
 
 use App\Contracts\Services\DnsResolver;
 use App\Models\LinkPreview;
-use Dom\HTMLDocument;
-use GuzzleHttp\Exception\ResponseException;
+use App\Services\GifLinks;
+use App\Services\LinkPreviewMetadata;
+use App\Services\LinkPreviewRequest;
 use GuzzleHttp\Psr7\Utils;
-use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\IpUtils;
 use Uri\WhatWg\Url;
@@ -21,8 +20,6 @@ final readonly class UpdateLinkPreview
     private const int MAX_REDIRECTS = 3;
 
     private const int MAX_BODY_BYTES = 1_048_576;
-
-    private const int MAX_IMAGE_URL_LENGTH = 2048;
 
     /**
      * Non-public ranges that filter_var's private and reserved range flags let through: carrier-grade NAT, IETF protocol
@@ -58,8 +55,12 @@ final readonly class UpdateLinkPreview
         'site_name' => null,
     ];
 
-    public function __construct(private DnsResolver $dns)
-    {
+    public function __construct(
+        private DnsResolver $dns,
+        private GifLinks $gifLinks,
+        private LinkPreviewRequest $request,
+        private LinkPreviewMetadata $metadata,
+    ) {
         //
     }
 
@@ -81,7 +82,11 @@ final readonly class UpdateLinkPreview
     private function fetchMetadata(string $url): array
     {
         $page = Url::parse($url);
-        $isGif = $page?->getScheme() === 'https' && str_ends_with(mb_strtolower($page->getPath()), '.gif');
+        $isGif = $this->gifLinks->isGifUrl($page);
+        $headers = $isGif
+            ? ['Accept' => GifLinks::CONTENT_TYPE, 'Range' => sprintf('bytes=0-%d', GifLinks::HEADER_BYTES - 1)]
+            : ['Accept' => 'text/html'];
+        $maxBodyBytes = $isGif ? GifLinks::HEADER_BYTES : self::MAX_BODY_BYTES;
 
         for ($hop = 0; $hop <= self::MAX_REDIRECTS && $page instanceof Url; $hop++) {
             $address = $this->publicAddress($page);
@@ -90,37 +95,43 @@ final readonly class UpdateLinkPreview
                 return self::NO_METADATA;
             }
 
-            $response = $this->get($page, $address, $isGif);
+            $response = $this->request->get($page, $address, $headers, $maxBodyBytes);
+            $response->throwIf($response->serverError() || $response->tooManyRequests());
 
-            if ($response->serverError() || $response->tooManyRequests()) {
-                $response->throw();
+            if ($response->redirect()) {
+                $page = Url::parse($response->header('Location'), $page);
+
+                continue;
             }
 
-            if (! $response->redirect()) {
-                if ($isGif && $response->successful()
-                    && mb_strtolower(mb_trim(Str::before($response->header('Content-Type'), ';'))) === 'image/gif'
-                    && mb_strlen($page->toAsciiString()) <= self::MAX_IMAGE_URL_LENGTH) {
-                    $header = $this->body($response);
-
-                    if (strlen($header) >= 13 && in_array(substr($header, 0, 6), ['GIF87a', 'GIF89a'], true)
-                        && substr($header, 6, 2) !== "\0\0" && substr($header, 8, 2) !== "\0\0") {
-                        return [...self::NO_METADATA, 'gif_url' => $page->toAsciiString()];
-                    }
-                }
-
-                if ($isGif) {
-                    return self::NO_METADATA;
-                }
-
-                return $response->successful() && $this->isHtml($response)
-                    ? $this->parse($this->body($response), $page)
-                    : self::NO_METADATA;
+            if (! $response->successful()) {
+                return self::NO_METADATA;
             }
 
-            $page = Url::parse($response->header('Location'), $page);
+            if ($isGif) {
+                return $this->getGifMetadata($response, $page);
+            }
+
+            return $this->isHtml($response)
+                ? $this->metadata->parse($this->body($response), $page)
+                : self::NO_METADATA;
         }
 
         return self::NO_METADATA;
+    }
+
+    /**
+     * @return array{title: string|null, description: string|null, image_url: string|null, site_name: string|null, gif_url?: string}
+     */
+    private function getGifMetadata(Response $response, Url $page): array
+    {
+        $url = $this->gifLinks->getVerifiedUrl($page, $response->header('Content-Type'), $this->body($response));
+
+        if ($url === null) {
+            return self::NO_METADATA;
+        }
+
+        return [...self::NO_METADATA, 'gif_url' => $url];
     }
 
     /**
@@ -132,7 +143,7 @@ final readonly class UpdateLinkPreview
         if (! in_array($url->getScheme(), ['http', 'https'], true)
             || ($url->getUsername() ?? '') !== ''
             || ($url->getPassword() ?? '') !== ''
-            || ! in_array($url->getPort(), [null, 80, 443], true)) {
+            || ! in_array($url->getPort(), [null, LinkPreviewRequest::HTTP_PORT, LinkPreviewRequest::HTTPS_PORT], true)) {
             return null;
         }
 
@@ -145,48 +156,6 @@ final readonly class UpdateLinkPreview
     {
         return filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) !== false
             && ! IpUtils::checkIp($address, self::BLOCKED_RANGES);
-    }
-
-    /**
-     * Connects to the address that was checked rather than resolving the host again, so DNS rebinding can't swap in a
-     * private address. The empty host and port in CURLOPT_CONNECT_TO match every request, so the pin holds even if
-     * cURL were to read the URL differently than we do. Bodies are cut off after 1 MB, and a body that was cut off
-     * (by that limit or by the timeout) is still used, as metadata lives at the top of the page. English is asked for
-     * explicitly, as sites such as YouTube otherwise pick the language from the server's location.
-     */
-    private function get(Url $url, string $address, bool $isGif = false): Response
-    {
-        $port = $url->getPort() ?? ($url->getScheme() === 'https' ? 443 : 80);
-
-        $request = Http::withUserAgent(sprintf('Mozilla/5.0 (compatible; devnull-linkpreview/1.0; +%s)', config()->string('app.url')))
-            ->accept($isGif ? 'image/gif' : 'text/html')
-            ->withHeaders(['Accept-Language' => 'en-US,en;q=0.9'])
-            ->connectTimeout(3)
-            ->timeout(5)
-            ->withoutRedirecting()
-            ->withOptions([
-                'decode_content' => false,
-                'progress' => fn (int $expected, int $downloaded): bool => $downloaded > ($isGif ? 32 : self::MAX_BODY_BYTES),
-                'curl' => [
-                    CURLOPT_CONNECT_TO => [sprintf('::%s:%d', str_contains($address, ':') ? "[{$address}]" : $address, $port)],
-                ],
-            ]);
-
-        try {
-            if ($isGif) {
-                $request->withHeaders(['Range' => 'bytes=0-31']);
-            }
-
-            return $request->get($url->toAsciiString());
-        } catch (ConnectionException $connectionException) {
-            $cutOff = $connectionException->getPrevious();
-
-            if ($cutOff instanceof ResponseException) {
-                return new Response($cutOff->getResponse());
-            }
-
-            throw $connectionException;
-        }
     }
 
     private function isHtml(Response $response): bool
@@ -202,63 +171,5 @@ final readonly class UpdateLinkPreview
         $body->rewind();
 
         return Utils::copyToString($body, self::MAX_BODY_BYTES);
-    }
-
-    /**
-     * @return array{title: string|null, description: string|null, image_url: string|null, site_name: string|null}
-     */
-    private function parse(string $html, Url $page): array
-    {
-        $document = HTMLDocument::createFromString($html, LIBXML_NOERROR);
-        $meta = [];
-
-        foreach ($document->querySelectorAll('meta[content]') as $element) {
-            $key = mb_strtolower(mb_trim($element->getAttribute('property') ?? $element->getAttribute('name') ?? ''));
-            $meta[$key] ??= (string) $element->getAttribute('content');
-        }
-
-        return [
-            'title' => $this->text([$meta['og:title'] ?? '', $meta['twitter:title'] ?? '', $document->title], 300),
-            'description' => $this->text([$meta['og:description'] ?? '', $meta['twitter:description'] ?? '', $meta['description'] ?? ''], 500),
-            'image_url' => $this->imageUrl([$meta['og:image:secure_url'] ?? '', $meta['og:image'] ?? '', $meta['twitter:image'] ?? ''], $page),
-            'site_name' => $this->text([$meta['og:site_name'] ?? ''], 100),
-        ];
-    }
-
-    /**
-     * Returns the first candidate that still has text once entities are decoded and whitespace is collapsed,
-     * truncated to the column's length.
-     *
-     * @param  list<string>  $candidates
-     */
-    private function text(array $candidates, int $limit): ?string
-    {
-        foreach ($candidates as $candidate) {
-            $text = Str::squish(html_entity_decode($candidate, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
-
-            if ($text !== '') {
-                return mb_strlen($text) > $limit ? mb_rtrim(mb_substr($text, 0, $limit - 1)).'…' : $text;
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * Returns the first candidate that, resolved against the page URL, is an https URL.
-     *
-     * @param  list<string>  $candidates
-     */
-    private function imageUrl(array $candidates, Url $page): ?string
-    {
-        foreach ($candidates as $candidate) {
-            $image = mb_trim($candidate) === '' ? null : Url::parse($candidate, $page);
-
-            if ($image?->getScheme() === 'https' && mb_strlen($image->toAsciiString()) <= self::MAX_IMAGE_URL_LENGTH) {
-                return $image->toAsciiString();
-            }
-        }
-
-        return null;
     }
 }
