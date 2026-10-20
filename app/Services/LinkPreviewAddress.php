@@ -11,27 +11,15 @@ use Uri\WhatWg\Url;
 final readonly class LinkPreviewAddress
 {
     /**
-     * Non-public ranges that filter_var's private and reserved range flags let through: carrier-grade NAT, IETF protocol
-     * assignments, 6to4 relays, benchmarking, documentation and multicast for IPv4; NAT64, discard, Teredo,
-     * documentation, 6to4, site-local, multicast and IPv4-translated addresses for IPv6.
+     * Extend Symfony's private subnets with relay, multicast, site-local and translated ranges
+     * that PHP's global-range filter also permits.
      *
      * @var list<string>
      */
     private const array BLOCKED_RANGES = [
-        '100.64.0.0/10',
-        '192.0.0.0/24',
-        '192.0.2.0/24',
+        ...IpUtils::PRIVATE_SUBNETS,
         '192.88.99.0/24',
-        '198.18.0.0/15',
-        '198.51.100.0/24',
-        '203.0.113.0/24',
         '224.0.0.0/4',
-        '64:ff9b::/96',
-        '64:ff9b:1::/48',
-        '100::/64',
-        '2001::/32',
-        '2001:db8::/32',
-        '2002::/16',
         'fec0::/10',
         'ff00::/8',
         '::ffff:0:0:0/96',
@@ -71,7 +59,7 @@ final readonly class LinkPreviewAddress
 
     private function isPublic(string $address): bool
     {
-        return filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) !== false
+        return filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_GLOBAL_RANGE) !== false
             && ! IpUtils::checkIp($address, self::BLOCKED_RANGES);
     }
 }

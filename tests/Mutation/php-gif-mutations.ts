@@ -36,11 +36,25 @@ export const phpGifMutations: GifMutation[] = [
         after: 'if (false)',
     },
     {
-        name: 'private addresses are rejected',
+        name: 'non-global addresses are rejected',
         source: 'app/Services/LinkPreviewAddress.php',
         test: 'tests/Unit/Actions/UpdateLinkPreviewTest.php',
-        before: 'return filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) !== false',
+        before: 'return filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_GLOBAL_RANGE) !== false',
         after: 'return true',
+    },
+    {
+        name: 'Symfony special-use subnets stay blocked',
+        source: 'app/Services/LinkPreviewAddress.php',
+        test: 'tests/Unit/Actions/UpdateLinkPreviewTest.php',
+        before: '...IpUtils::PRIVATE_SUBNETS,',
+        after: '',
+    },
+    {
+        name: 'additional relay ranges stay blocked',
+        source: 'app/Services/LinkPreviewAddress.php',
+        test: 'tests/Unit/Actions/UpdateLinkPreviewTest.php',
+        before: "'192.88.99.0/24',",
+        after: '',
     },
     {
         name: 'all DNS answers must be public',

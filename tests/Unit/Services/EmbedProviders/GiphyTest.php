@@ -18,6 +18,7 @@ it('builds external GIF and static poster URLs without an API', function (string
     'share' => 'https://giphy.com/gifs/cat-typing-JIX9t2j0ZTN9S',
     'id' => 'https://www.giphy.com/gifs/JIX9t2j0ZTN9S/',
     'embed' => 'https://giphy.com/embed/JIX9t2j0ZTN9S',
+    'uppercase section' => 'https://giphy.com/GIFS/cat-JIX9t2j0ZTN9S',
     'query and fragment' => 'https://giphy.com/gifs/cat-JIX9t2j0ZTN9S?tracking=ignored#ignored',
     'http link' => 'http://giphy.com/gifs/JIX9t2j0ZTN9S',
 ]);
@@ -28,6 +29,8 @@ it('does not embed malformed links or untrusted hosts', function (string $url): 
     'home' => 'https://giphy.com/',
     'search' => 'https://giphy.com/search/cats',
     'missing id' => 'https://giphy.com/gifs/',
+    'empty slug identifier' => 'https://giphy.com/gifs/cat-',
+    'embed with slug' => 'https://giphy.com/embed/cat-JIX9t2j0ZTN9S',
     'escaped id' => 'https://giphy.com/gifs/cat-%3Cscript%3E',
     'extra segment' => 'https://giphy.com/embed/JIX9t2j0ZTN9S/other',
     'lookalike' => 'https://giphy.com.example.com/gifs/JIX9t2j0ZTN9S',

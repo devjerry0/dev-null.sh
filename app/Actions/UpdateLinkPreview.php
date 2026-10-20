@@ -23,6 +23,12 @@ final readonly class UpdateLinkPreview
 
     private const int MAX_BODY_BYTES = 1_048_576;
 
+    private const string HEADER_ACCEPT = 'Accept';
+
+    private const string HEADER_RANGE = 'Range';
+
+    private const string HTML_CONTENT_TYPE = 'text/html';
+
     public function __construct(
         private LinkPreviewAddress $addresses,
         private LinkPreviewBudget $budget,
@@ -121,10 +127,10 @@ final readonly class UpdateLinkPreview
     private function requestHeaders(bool $isGif): array
     {
         if (! $isGif) {
-            return ['Accept' => 'text/html'];
+            return [self::HEADER_ACCEPT => self::HTML_CONTENT_TYPE];
         }
 
-        return ['Accept' => GifLinks::CONTENT_TYPE, 'Range' => sprintf('bytes=0-%d', GifLinks::HEADER_BYTES - 1)];
+        return [self::HEADER_ACCEPT => GifLinks::CONTENT_TYPE, self::HEADER_RANGE => sprintf('bytes=0-%d', GifLinks::HEADER_BYTES - 1)];
     }
 
     private function responseMetadata(Response $response, Url $page, bool $isGif): LinkPreviewMetadata
@@ -155,7 +161,7 @@ final readonly class UpdateLinkPreview
     {
         $mediaType = mb_strtolower(mb_trim(Str::before($response->header('Content-Type'), ';')));
 
-        return in_array($mediaType, ['text/html', 'application/xhtml+xml'], true);
+        return in_array($mediaType, [self::HTML_CONTENT_TYPE, 'application/xhtml+xml'], true);
     }
 
     private function body(Response $response): string

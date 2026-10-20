@@ -15,8 +15,6 @@ final readonly class Giphy implements EmbedProvider
 
     private const array SUPPORTED_HOSTS = ['giphy.com', 'www.giphy.com'];
 
-    private const array SUPPORTED_PATHS = ['gifs', 'embed'];
-
     private const int PATH_SEGMENT_COUNT = 2;
 
     public function embed(Url $url): ?Embed
@@ -66,18 +64,12 @@ final readonly class Giphy implements EmbedProvider
         }
 
         [$section, $slug] = $segments;
-        $section = Str::lower($section);
+        $identifier = match (Str::lower($section)) {
+            'gifs' => Str::afterLast($slug, '-'),
+            'embed' => $slug,
+            default => '',
+        };
 
-        if (! in_array($section, self::SUPPORTED_PATHS, true)) {
-            return null;
-        }
-
-        $identifier = $section === 'gifs' ? Str::afterLast($slug, '-') : $slug;
-
-        if (! ctype_alnum($identifier)) {
-            return null;
-        }
-
-        return $identifier;
+        return ctype_alnum($identifier) ? $identifier : null;
     }
 }
