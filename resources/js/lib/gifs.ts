@@ -1,4 +1,6 @@
-export function isGifUrl(value: string): boolean {
+const GIF_AUTOPLAY_HOSTS = new Set(['media.giphy.com']);
+
+function parseHttpsUrl(value: string): URL | null {
     try {
         const url = new URL(value);
 
@@ -8,13 +10,25 @@ export function isGifUrl(value: string): boolean {
             url.password !== '' ||
             url.port !== ''
         ) {
-            return false;
+            return null;
         }
 
-        return url.pathname.toLowerCase().endsWith('.gif');
+        return url;
     } catch {
-        return false;
+        return null;
     }
+}
+
+export function isGifUrl(value: string): boolean {
+    return (
+        parseHttpsUrl(value)?.pathname.toLowerCase().endsWith('.gif') ?? false
+    );
+}
+
+export function canAutoplayGif(value: string): boolean {
+    const url = parseHttpsUrl(value);
+
+    return url !== null && GIF_AUTOPLAY_HOSTS.has(url.hostname);
 }
 
 export const GIF_PLAYBACK_MODE = {
@@ -27,12 +41,14 @@ export type GifPlayback =
     (typeof GIF_PLAYBACK_MODE)[keyof typeof GIF_PLAYBACK_MODE];
 
 export function isGifPlaying({
+    source,
     playback,
     isVisible,
     reducedMotion,
     isStatic,
     hasFailed,
 }: {
+    source: string;
     playback: GifPlayback;
     isVisible: boolean;
     reducedMotion: boolean;
@@ -52,5 +68,5 @@ export function isGifPlaying({
         return true;
     }
 
-    return !reducedMotion;
+    return !reducedMotion && canAutoplayGif(source);
 }

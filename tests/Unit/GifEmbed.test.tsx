@@ -89,3 +89,14 @@ test('only the explicit static poster can load before playback', () => {
     assert.ok(!html.includes('data-test="gif-animation"'));
     assert.ok(!html.includes('untrusted-thumbnail'));
 });
+
+test('arbitrary GIF hosts have no automatic thumbnail or image request', () => {
+    const html = renderToStaticMarkup(
+        <GifEmbed preview={preview} embed={{ ...embed, poster: 'https://example.com/poster.gif' }} />,
+    );
+
+    assert.ok(html.includes('aria-label="Play GIF"'));
+    assert.ok(html.includes('External GIF'));
+    assert.ok(!html.includes('<img'));
+    assert.ok(!html.includes('poster.gif'));
+});

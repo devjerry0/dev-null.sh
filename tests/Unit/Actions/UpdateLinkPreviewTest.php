@@ -4,15 +4,21 @@ declare(strict_types=1);
 
 use App\Actions\UpdateLinkPreview;
 use App\Contracts\Services\DnsResolver;
+use App\Dto\LinkPreviewRequest;
 use App\Models\LinkPreview;
 use App\Services\DnsResolvers\SystemDnsResolver;
+use App\Services\LimitedResponseBody;
+use App\Services\LinkPreviewBudget;
+use App\Services\LinkPreviewHttpClient;
 use GuzzleHttp\Exception\ResponseException;
 use GuzzleHttp\Promise\Create;
 use GuzzleHttp\Promise\PromiseInterface;
 use GuzzleHttp\Psr7\Response as PsrResponse;
+use GuzzleHttp\RequestOptions;
 use Illuminate\Http\Client\HttpClientException;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
+use Uri\WhatWg\Url;
 
 beforeEach(function (): void {
     $this->app->instance(DnsResolver::class, new readonly class implements DnsResolver
@@ -45,8 +51,9 @@ it('verifies external GIFs from a small header without storing their bytes', fun
     expect($preview->gif_url)->toBe('https://example.com/cat.GIF?token=keep')
         ->and($preview->image_url)->toBeNull()
         ->and($preview->fetched_at)->not->toBeNull()
-        ->and($options['progress'](1000, 32))->toBeFalse()
-        ->and($options['progress'](1000, 33))->toBeTrue();
+        ->and($options['sink'])->toBeInstanceOf(LimitedResponseBody::class)
+        ->and($options['sink']->write(str_repeat('x', 33)))->toBe(32)
+        ->and($options['sink']->getSize())->toBe(32);
 
     Http::assertSent(fn (Request $request): bool => $request->header('Range') === ['bytes=0-31']
         && $request->header('Accept') === ['image/gif']);
@@ -70,6 +77,8 @@ it('does not trust a GIF extension or a content type without a valid header', fu
     'wrong signature' => ["GIF90a\x01\x00\x01\x00\x80\x00\x00", 'image/gif'],
     'zero width' => ["GIF89a\x00\x00\x01\x00\x80\x00\x00", 'image/gif'],
     'zero height' => ["GIF89a\x01\x00\x00\x00\x80\x00\x00", 'image/gif'],
+    'zero height with wide canvas' => ["GIF89a\x00\x01\x00\x00\x80\x00\x00", 'image/gif'],
+    'incomplete screen descriptor' => ["GIF89a\x01\x00\x01\x00\x80\x00", 'image/gif'],
 ]);
 
 it('keeps only the final public HTTPS GIF URL after redirects', function (): void {
@@ -201,11 +210,12 @@ it('sends a pinned and bounded request that identifies itself and asks for engli
     expect($options)
         ->allow_redirects->toBeFalse()
         ->connect_timeout->toBe(3)
-        ->timeout->toBe(5)
+        ->timeout->toBeGreaterThan(0)->toBeLessThanOrEqual(5)
         ->decode_content->toBeFalse()
         ->and($options['curl'][CURLOPT_CONNECT_TO])->toBe(['::93.184.216.34:443'])
-        ->and($options['progress'](0, 1_048_576, 0, 0))->toBeFalse()
-        ->and($options['progress'](2_000_000, 1_048_577, 0, 0))->toBeTrue();
+        ->and($options['sink'])->toBeInstanceOf(LimitedResponseBody::class)
+        ->and($options['sink']->write(str_repeat('x', 1_048_577)))->toBe(1_048_576)
+        ->and($options['sink']->getSize())->toBe(1_048_576);
 });
 
 it('pins the connection to the port and address that were checked', function (string $url, string $connectTo): void {
@@ -413,6 +423,8 @@ it('refuses to fetch urls that are not public http urls', function (string $url)
     'host resolving partly to a private address' => 'https://mixed.example.com/',
     'host resolving to nothing' => 'https://nowhere.example.com/',
     'non-default port' => 'https://example.com:8080/',
+    'https on http port' => 'https://example.com:80/',
+    'http on https port' => 'http://example.com:443/',
     'credentials' => 'https://user:secret@example.com/',
     'username only' => 'https://user@example.com/',
     'password only' => 'https://:secret@example.com/',
@@ -527,4 +539,109 @@ it('throws unexpected errors without marking the link as fetched', function (): 
 
     expect(fn () => resolve(UpdateLinkPreview::class)->handle($linkPreview))->toThrow(RuntimeException::class, 'The resolver broke.')
         ->and($linkPreview->refresh()->fetched_at)->toBeNull();
+});
+
+it('stops repeated redirect destinations before fetching them again', function (array $responses, int $requests): void {
+    Http::fake($responses);
+
+    expect(unfurl('https://example.com/start.gif')->gif_url)->toBeNull();
+    Http::assertSentCount($requests);
+})->with([
+    'self loop' => [fn (): array => [
+        'https://example.com/start.gif' => Http::response(status: 302, headers: ['Location' => '/start.gif']),
+    ], 1],
+    'fragment-only loop' => [fn (): array => [
+        'https://example.com/start.gif' => Http::response(status: 302, headers: ['Location' => '#other']),
+    ], 1],
+    'two host loop' => [fn (): array => [
+        'https://example.com/start.gif' => Http::response(status: 302, headers: ['Location' => 'https://www.example.com/next.gif']),
+        'https://www.example.com/next.gif' => Http::response(status: 302, headers: ['Location' => 'https://example.com/start.gif']),
+    ], 2],
+]);
+
+it('does not refetch redirects with a missing or invalid location', function (?string $location): void {
+    Http::fake(['https://example.com/*' => Http::response(status: 302, headers: $location === null ? [] : ['Location' => $location])]);
+
+    expect(unfurl('https://example.com/start.gif')->gif_url)->toBeNull();
+    Http::assertSentCount(1);
+})->with([null, '', '   ', 'https://invalid host/cat.gif']);
+
+it('reduces each hop timeout to the remaining overall budget', function (): void {
+    $nanoseconds = 0;
+    $clock = function () use (&$nanoseconds): int {
+        return $nanoseconds;
+    };
+    $this->app->instance(LinkPreviewBudget::class, new LinkPreviewBudget($clock));
+    $timeouts = [];
+    $connectTimeouts = [];
+    Http::fake(function (Request $request, array $options) use (&$nanoseconds, &$timeouts, &$connectTimeouts): PromiseInterface {
+        $timeouts[] = $options['timeout'];
+        $connectTimeouts[] = $options['connect_timeout'];
+        $nanoseconds += 2_000_000_000;
+
+        return Http::response(status: 302, headers: ['Location' => '/hop-'.count($timeouts).'.gif']);
+    });
+
+    expect(unfurl('https://example.com/start.gif')->gif_url)->toBeNull()
+        ->and($timeouts)->toBe([5.0, 3.0, 1.0])
+        ->and($connectTimeouts)->toBe([3, 3.0, 1.0]);
+    Http::assertSentCount(3);
+});
+
+it('does not connect if resolving an address exhausted the budget', function (): void {
+    $this->app->instance(LinkPreviewBudget::class, new LinkPreviewBudget(function (): int {
+        static $calls = 0;
+
+        return $calls++ === 0 ? 0 : 6_000_000_000;
+    }));
+    Http::fake();
+
+    expect(unfurl('https://example.com/start.gif')->gif_url)->toBeNull();
+    Http::assertNothingSent();
+});
+
+it('rechecks changed DNS answers before following a redirect', function (): void {
+    $this->app->instance(DnsResolver::class, new class implements DnsResolver
+    {
+        private int $calls = 0;
+
+        public function resolve(string $host): array
+        {
+            return $this->calls++ === 0 ? ['93.184.216.34'] : ['10.0.0.1'];
+        }
+    });
+    Http::fake(['https://example.com/start.gif' => Http::response(status: 302, headers: ['Location' => '/next.gif'])]);
+
+    expect(unfurl('https://example.com/start.gif')->gif_url)->toBeNull();
+    Http::assertSentCount(1);
+});
+
+it('accepts only final GIF URLs within the storage length limit', function (int $length, bool $valid): void {
+    $base = 'https://www.example.com/';
+    $destination = $base.str_repeat('x', $length - mb_strlen($base));
+    Http::fake([
+        'https://example.com/cat.gif' => Http::response(status: 302, headers: ['Location' => $destination]),
+        $destination => Http::response("GIF89a\x01\x00\x01\x00\x80\x00\x00", 200, ['Content-Type' => 'image/gif']),
+    ]);
+
+    expect(unfurl('https://example.com/cat.gif')->gif_url)->toBe($valid ? $destination : null);
+})->with([[2048, true], [2049, false]]);
+
+it('pins the explicit port carried by a prepared request', function (): void {
+    $options = [];
+    Http::fake(function (Request $request, array $sent) use (&$options): PromiseInterface {
+        $options = $sent;
+
+        return htmlResponse('<title>Prepared request</title>');
+    });
+    $request = new LinkPreviewRequest(
+        url: Url::parse('https://example.com:8443/'),
+        address: '93.184.216.34',
+        headers: ['Accept' => 'text/html'],
+        maxBodyBytes: 32,
+        timeoutSeconds: 5,
+    );
+
+    expect(resolve(LinkPreviewHttpClient::class)->get($request)->successful())->toBeTrue()
+        ->and($options[RequestOptions::CURL][CURLOPT_CONNECT_TO])->toBe(['::93.184.216.34:8443']);
 });

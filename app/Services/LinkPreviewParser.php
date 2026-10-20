@@ -4,11 +4,12 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Dto\LinkPreviewMetadata;
 use Dom\HTMLDocument;
 use Illuminate\Support\Str;
 use Uri\WhatWg\Url;
 
-final readonly class LinkPreviewMetadata
+final readonly class LinkPreviewParser
 {
     private const int MAX_IMAGE_URL_LENGTH = 2048;
 
@@ -18,10 +19,7 @@ final readonly class LinkPreviewMetadata
 
     private const int MAX_SITE_NAME_LENGTH = 100;
 
-    /**
-     * @return array{title: string|null, description: string|null, image_url: string|null, site_name: string|null}
-     */
-    public function parse(string $html, Url $page): array
+    public function parse(string $html, Url $page): LinkPreviewMetadata
     {
         $document = HTMLDocument::createFromString($html, LIBXML_NOERROR);
         $meta = [];
@@ -31,12 +29,12 @@ final readonly class LinkPreviewMetadata
             $meta[$key] ??= (string) $element->getAttribute('content');
         }
 
-        return [
-            'title' => $this->text([$meta['og:title'] ?? '', $meta['twitter:title'] ?? '', $document->title], self::MAX_TITLE_LENGTH),
-            'description' => $this->text([$meta['og:description'] ?? '', $meta['twitter:description'] ?? '', $meta['description'] ?? ''], self::MAX_DESCRIPTION_LENGTH),
-            'image_url' => $this->imageUrl([$meta['og:image:secure_url'] ?? '', $meta['og:image'] ?? '', $meta['twitter:image'] ?? ''], $page),
-            'site_name' => $this->text([$meta['og:site_name'] ?? ''], self::MAX_SITE_NAME_LENGTH),
-        ];
+        return new LinkPreviewMetadata(
+            title: $this->text([$meta['og:title'] ?? '', $meta['twitter:title'] ?? '', $document->title], self::MAX_TITLE_LENGTH),
+            description: $this->text([$meta['og:description'] ?? '', $meta['twitter:description'] ?? '', $meta['description'] ?? ''], self::MAX_DESCRIPTION_LENGTH),
+            imageUrl: $this->imageUrl([$meta['og:image:secure_url'] ?? '', $meta['og:image'] ?? '', $meta['twitter:image'] ?? ''], $page),
+            siteName: $this->text([$meta['og:site_name'] ?? ''], self::MAX_SITE_NAME_LENGTH),
+        );
     }
 
     /**

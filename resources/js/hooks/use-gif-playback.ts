@@ -58,6 +58,7 @@ export function useGifPlayback({
     const isPlaying =
         embed !== null &&
         isGifPlaying({
+            source: embed.src,
             playback,
             isVisible,
             reducedMotion,
