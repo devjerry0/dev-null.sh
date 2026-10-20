@@ -133,11 +133,7 @@ export function LinkPreview({
 
     if (isGifUrl(preview.url)) {
         return (
-            <GifEmbed
-                key={preview.url}
-                preview={preview}
-                isStatic={isStatic}
-            />
+            <GifEmbed key={preview.url} preview={preview} isStatic={isStatic} />
         );
     }
 

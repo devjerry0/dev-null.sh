@@ -52,6 +52,12 @@ it('verifies external GIFs from a small header without storing their bytes', fun
         && $request->header('Accept') === ['image/gif']);
 })->with(['GIF87a', 'GIF89a']);
 
+it('reads GIF dimensions as bytes rather than UTF-8 text', function (): void {
+    Http::fake(['https://example.com/cat.gif' => Http::response("GIF89a\xc2\x80\x01\x00\x80\x00\x00", 206, ['Content-Type' => 'image/gif'])]);
+
+    expect(unfurl('https://example.com/cat.gif')->gif_url)->toBe('https://example.com/cat.gif');
+});
+
 it('does not trust a GIF extension or a content type without a valid header', function (string $body, string $contentType): void {
     Http::fake(['https://example.com/*' => Http::response($body, 200, ['Content-Type' => $contentType])]);
 

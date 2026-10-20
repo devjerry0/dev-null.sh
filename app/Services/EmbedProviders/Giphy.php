@@ -6,25 +6,78 @@ namespace App\Services\EmbedProviders;
 
 use App\Contracts\Services\EmbedProvider;
 use App\Dto\Embed;
+use Illuminate\Support\Str;
 use Uri\WhatWg\Url;
 
 final readonly class Giphy implements EmbedProvider
 {
+    private const array SUPPORTED_SCHEMES = ['http', 'https'];
+
+    private const array SUPPORTED_HOSTS = ['giphy.com', 'www.giphy.com'];
+
+    private const array SUPPORTED_PATHS = ['gifs', 'embed'];
+
+    private const int PATH_SEGMENT_COUNT = 2;
+
     public function embed(Url $url): ?Embed
     {
-        if (! in_array($url->getScheme(), ['http', 'https'], true)
-            || ! in_array($url->getAsciiHost(), ['giphy.com', 'www.giphy.com'], true)) {
+        if (! $this->supportsUrl($url)) {
             return null;
         }
 
-        if (($url->getUsername() ?? '') !== '' || ($url->getPassword() ?? '') !== '' || $url->getPort() !== null) {
+        $identifier = $this->getGifId($url->getPath());
+
+        if ($identifier === null) {
             return null;
         }
 
-        if (preg_match('#^/(?:gifs/(?:[a-z0-9-]+-)?|embed/)([a-z0-9]+)/?$#i', $url->getPath(), $matches) !== 1) {
+        $mediaUrl = "https://media.giphy.com/media/{$identifier}";
+
+        return Embed::gif('GIPHY', "{$mediaUrl}/giphy.gif", "{$mediaUrl}/giphy_s.gif");
+    }
+
+    private function supportsUrl(Url $url): bool
+    {
+        if (! in_array($url->getScheme(), self::SUPPORTED_SCHEMES, true)) {
+            return false;
+        }
+
+        if (! in_array($url->getAsciiHost(), self::SUPPORTED_HOSTS, true)) {
+            return false;
+        }
+
+        if (($url->getUsername() ?? '') !== '') {
+            return false;
+        }
+
+        if (($url->getPassword() ?? '') !== '') {
+            return false;
+        }
+
+        return $url->getPort() === null;
+    }
+
+    private function getGifId(string $path): ?string
+    {
+        $segments = explode('/', mb_trim($path, '/'));
+
+        if (count($segments) !== self::PATH_SEGMENT_COUNT) {
             return null;
         }
 
-        return Embed::gif('GIPHY', "https://media.giphy.com/media/{$matches[1]}/giphy.gif", "https://media.giphy.com/media/{$matches[1]}/giphy_s.gif");
+        [$section, $slug] = $segments;
+        $section = Str::lower($section);
+
+        if (! in_array($section, self::SUPPORTED_PATHS, true)) {
+            return null;
+        }
+
+        $identifier = $section === 'gifs' ? Str::afterLast($slug, '-') : $slug;
+
+        if (! ctype_alnum($identifier)) {
+            return null;
+        }
+
+        return $identifier;
     }
 }

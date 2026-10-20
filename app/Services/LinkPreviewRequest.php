@@ -40,12 +40,10 @@ final readonly class LinkPreviewRequest
                     'curl' => [CURLOPT_CONNECT_TO => [$connection]],
                 ])
                 ->get($url->toAsciiString());
-        } catch (ConnectionException $exception) {
-            $previous = $exception->getPrevious();
+        } catch (ConnectionException $connectionException) {
+            $previous = $connectionException->getPrevious();
 
-            if (! $previous instanceof ResponseException) {
-                throw $exception;
-            }
+            throw_unless($previous instanceof ResponseException, $connectionException);
 
             return new Response($previous->getResponse());
         }

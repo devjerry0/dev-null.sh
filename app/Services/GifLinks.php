@@ -25,6 +25,12 @@ final readonly class GifLinks
 
     private const int DIMENSION_BYTES = 2;
 
+    private const array SIGNATURES = ['GIF87a', 'GIF89a'];
+
+    private const string ZERO_DIMENSION = "\0\0";
+
+    private const string BINARY_ENCODING = '8bit';
+
     public function isGifUrl(?Url $url): bool
     {
         if ($url?->getScheme() !== 'https') {
@@ -36,24 +42,46 @@ final readonly class GifLinks
 
     public function getVerifiedUrl(Url $url, string $contentType, string $header): ?string
     {
-        if (mb_strtolower(mb_trim(Str::before($contentType, ';'))) !== self::CONTENT_TYPE
-            || mb_strlen($url->toAsciiString()) > self::MAX_URL_LENGTH) {
+        $mediaType = mb_strtolower(mb_trim(Str::before($contentType, ';')));
+
+        if ($mediaType !== self::CONTENT_TYPE) {
             return null;
         }
 
-        if (strlen($header) < self::MIN_HEADER_BYTES) {
+        $sourceUrl = $url->toAsciiString();
+
+        if (mb_strlen($sourceUrl) > self::MAX_URL_LENGTH) {
             return null;
         }
 
-        if (! in_array(substr($header, 0, self::SIGNATURE_BYTES), ['GIF87a', 'GIF89a'], true)) {
+        if (! $this->isValidHeader($header)) {
             return null;
         }
 
-        if (substr($header, self::WIDTH_OFFSET, self::DIMENSION_BYTES) === "\0\0"
-            || substr($header, self::HEIGHT_OFFSET, self::DIMENSION_BYTES) === "\0\0") {
-            return null;
+        return $sourceUrl;
+    }
+
+    private function isValidHeader(string $header): bool
+    {
+        if (mb_strlen($header, self::BINARY_ENCODING) < self::MIN_HEADER_BYTES) {
+            return false;
         }
 
-        return $url->toAsciiString();
+        return $this->hasValidSignature($header) && $this->hasValidDimensions($header);
+    }
+
+    private function hasValidSignature(string $header): bool
+    {
+        $signature = mb_substr($header, 0, self::SIGNATURE_BYTES, self::BINARY_ENCODING);
+
+        return in_array($signature, self::SIGNATURES, true);
+    }
+
+    private function hasValidDimensions(string $header): bool
+    {
+        $width = mb_substr($header, self::WIDTH_OFFSET, self::DIMENSION_BYTES, self::BINARY_ENCODING);
+        $height = mb_substr($header, self::HEIGHT_OFFSET, self::DIMENSION_BYTES, self::BINARY_ENCODING);
+
+        return $width !== self::ZERO_DIMENSION && $height !== self::ZERO_DIMENSION;
     }
 }

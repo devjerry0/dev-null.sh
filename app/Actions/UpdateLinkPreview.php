@@ -83,9 +83,7 @@ final readonly class UpdateLinkPreview
     {
         $page = Url::parse($url);
         $isGif = $this->gifLinks->isGifUrl($page);
-        $headers = $isGif
-            ? ['Accept' => GifLinks::CONTENT_TYPE, 'Range' => sprintf('bytes=0-%d', GifLinks::HEADER_BYTES - 1)]
-            : ['Accept' => 'text/html'];
+        $headers = $this->requestHeaders($isGif);
         $maxBodyBytes = $isGif ? GifLinks::HEADER_BYTES : self::MAX_BODY_BYTES;
 
         for ($hop = 0; $hop <= self::MAX_REDIRECTS && $page instanceof Url; $hop++) {
@@ -104,20 +102,42 @@ final readonly class UpdateLinkPreview
                 continue;
             }
 
-            if (! $response->successful()) {
-                return self::NO_METADATA;
-            }
-
-            if ($isGif) {
-                return $this->getGifMetadata($response, $page);
-            }
-
-            return $this->isHtml($response)
-                ? $this->metadata->parse($this->body($response), $page)
-                : self::NO_METADATA;
+            return $this->responseMetadata($response, $page, $isGif);
         }
 
         return self::NO_METADATA;
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function requestHeaders(bool $isGif): array
+    {
+        if (! $isGif) {
+            return ['Accept' => 'text/html'];
+        }
+
+        return ['Accept' => GifLinks::CONTENT_TYPE, 'Range' => sprintf('bytes=0-%d', GifLinks::HEADER_BYTES - 1)];
+    }
+
+    /**
+     * @return array{title: string|null, description: string|null, image_url: string|null, site_name: string|null, gif_url?: string}
+     */
+    private function responseMetadata(Response $response, Url $page, bool $isGif): array
+    {
+        if (! $response->successful()) {
+            return self::NO_METADATA;
+        }
+
+        if ($isGif) {
+            return $this->getGifMetadata($response, $page);
+        }
+
+        if (! $this->isHtml($response)) {
+            return self::NO_METADATA;
+        }
+
+        return $this->metadata->parse($this->body($response), $page);
     }
 
     /**

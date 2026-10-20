@@ -11,7 +11,7 @@ const validGifUrls = [
 ];
 
 for (const url of validGifUrls) {
-    test(`recognizes a direct HTTPS GIF link: ${url}`, () => {
+    void test(`recognizes a direct HTTPS GIF link: ${url}`, () => {
         assert.equal(isGifUrl(url), true);
     });
 }
@@ -29,7 +29,7 @@ const invalidGifUrls = [
 ];
 
 for (const url of invalidGifUrls) {
-    test(`does not treat an unsupported link as a GIF: ${url}`, () => {
+    void test(`does not treat an unsupported link as a GIF: ${url}`, () => {
         assert.equal(isGifUrl(url), false);
     });
 }
@@ -42,12 +42,12 @@ const playback = {
     hasFailed: false,
 };
 
-test('autoplays visible GIFs and suspends them outside the viewport', () => {
+void test('autoplays visible GIFs and suspends them outside the viewport', () => {
     assert.equal(isGifPlaying(playback), true);
     assert.equal(isGifPlaying({ ...playback, isVisible: false }), false);
 });
 
-test('reduced motion requires an explicit Play action', () => {
+void test('reduced motion requires an explicit Play action', () => {
     assert.equal(isGifPlaying({ ...playback, reducedMotion: true }), false);
     assert.equal(
         isGifPlaying({ ...playback, reducedMotion: true, playback: 'play' }),
@@ -55,7 +55,7 @@ test('reduced motion requires an explicit Play action', () => {
     );
 });
 
-test('Stop survives leaving and reentering the viewport', () => {
+void test('Stop survives leaving and reentering the viewport', () => {
     assert.equal(isGifPlaying({ ...playback, playback: 'stop' }), false);
     assert.equal(
         isGifPlaying({ ...playback, playback: 'stop', isVisible: false }),
@@ -65,7 +65,7 @@ test('Stop survives leaving and reentering the viewport', () => {
     assert.equal(isGifPlaying({ ...playback, playback: 'play' }), true);
 });
 
-test('static cards and failed GIFs never animate, even after Play', () => {
+void test('static cards and failed GIFs never animate, even after Play', () => {
     assert.equal(isGifPlaying({ ...playback, isStatic: true }), false);
     assert.equal(
         isGifPlaying({ ...playback, playback: 'play', isStatic: true }),

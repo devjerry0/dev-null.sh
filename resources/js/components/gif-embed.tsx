@@ -1,5 +1,5 @@
 import { Play, Square } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { useGifPlayback } from '@/hooks/use-gif-playback';
 import { hostname } from '@/lib/urls';
@@ -24,11 +24,12 @@ export function GifEmbed({
     embed = null,
     isStatic = false,
 }: GifEmbedProps) {
-    const playback = useGifPlayback({ embed, isStatic });
+    const container = useRef<HTMLDivElement>(null);
+    const playback = useGifPlayback({ embed, isStatic, container });
 
     return (
         <div
-            ref={playback.container}
+            ref={container}
             onClick={isStatic ? undefined : (event) => event.stopPropagation()}
             className="mt-3 overflow-hidden rounded-lg border"
             data-test="gif-embed"
@@ -88,8 +89,13 @@ function GifStatus({ preview, embed, playback }: GifMediaProps) {
         >
             {playback.hasFailed && 'GIF could not load'}
             {!playback.hasFailed && embed && 'GIF'}
-            {!playback.hasFailed && !embed && preview.is_pending && 'Loading GIF…'}
-            {!playback.hasFailed && !embed && !preview.is_pending &&
+            {!playback.hasFailed &&
+                !embed &&
+                preview.is_pending &&
+                'Loading GIF…'}
+            {!playback.hasFailed &&
+                !embed &&
+                !preview.is_pending &&
                 'GIF preview unavailable'}
         </span>
     );
