@@ -2,13 +2,17 @@
 
 declare(strict_types=1);
 
-namespace App\Services\LinkPreviews;
+namespace App\Services\PreviewLinkProviders;
 
+use App\Contracts\PreviewLink;
+use App\Dto\LinkPreviewMetadata;
 use App\Services\Urls;
+use GuzzleHttp\Psr7\Utils;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Str;
 use Uri\WhatWg\Url;
 
-final readonly class GifLinks
+final readonly class GifPreviewLink implements PreviewLink
 {
     public const string CONTENT_TYPE = 'image/gif';
 
@@ -29,6 +33,20 @@ final readonly class GifLinks
     private const string ZERO_DIMENSION = "\0\0";
 
     private const string BINARY_ENCODING = '8bit';
+
+    public function metadata(Response $response, Url $finalUrl): LinkPreviewMetadata
+    {
+        $body = $response->toPsrResponse()->getBody();
+        $body->rewind();
+
+        $url = $this->getVerifiedUrl(
+            $finalUrl,
+            $response->header('Content-Type'),
+            Utils::copyToString($body, self::HEADER_BYTES),
+        );
+
+        return new LinkPreviewMetadata(gifUrl: $url);
+    }
 
     public function isGifUrl(?Url $url): bool
     {
