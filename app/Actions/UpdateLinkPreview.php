@@ -43,7 +43,7 @@ final readonly class UpdateLinkPreview
     {
         $metadata = $this->fetchMetadata($linkPreview->url);
 
-        $linkPreview->update([...$metadata->toArray(), 'fetched_at' => now()]);
+        $linkPreview->completeUnfurl($metadata->toArray());
     }
 
     private function fetchMetadata(string $url): LinkPreviewMetadata
