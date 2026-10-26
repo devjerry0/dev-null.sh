@@ -2,8 +2,9 @@
 
 declare(strict_types=1);
 
-namespace App\Services;
+namespace App\Services\LinkPreviews;
 
+use App\Services\Urls;
 use Illuminate\Support\Str;
 use Uri\WhatWg\Url;
 
