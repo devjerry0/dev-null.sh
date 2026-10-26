@@ -4,37 +4,32 @@ declare(strict_types=1);
 
 namespace App\Actions;
 
+use App\Contracts\PreviewLink;
 use App\Dto\LinkPreviewMetadata;
 use App\Dto\LinkPreviewRequest;
 use App\Models\LinkPreview;
-use App\Services\LinkPreviews\GifLinks;
 use App\Services\LinkPreviews\LinkPreviewAddress;
 use App\Services\LinkPreviews\LinkPreviewBudget;
 use App\Services\LinkPreviews\LinkPreviewHttpClient;
-use App\Services\LinkPreviews\LinkPreviewParser;
-use GuzzleHttp\Psr7\Utils;
+use App\Services\PreviewLinkProviders\GifPreviewLink;
+use App\Services\PreviewLinkProviders\HtmlPreviewLink;
 use Illuminate\Http\Client\Response;
-use Illuminate\Support\Str;
 use Uri\WhatWg\Url;
 
 final readonly class UpdateLinkPreview
 {
     private const int MAX_REDIRECTS = 3;
 
-    private const int MAX_BODY_BYTES = 1_048_576;
-
     private const string HEADER_ACCEPT = 'Accept';
 
     private const string HEADER_RANGE = 'Range';
 
-    private const string HTML_CONTENT_TYPE = 'text/html';
-
     public function __construct(
         private LinkPreviewAddress $addresses,
         private LinkPreviewBudget $budget,
-        private GifLinks $gifLinks,
+        private GifPreviewLink $gifLinks,
         private LinkPreviewHttpClient $http,
-        private LinkPreviewParser $parser,
+        private HtmlPreviewLink $html,
     ) {
         //
     }
@@ -50,6 +45,7 @@ final readonly class UpdateLinkPreview
     {
         $page = Url::parse($url);
         $isGif = $this->gifLinks->isGifUrl($page);
+        $previewLink = $isGif ? $this->gifLinks : $this->html;
         $deadline = $this->budget->start();
         $visited = [];
 
@@ -71,7 +67,7 @@ final readonly class UpdateLinkPreview
             $response->throwIf($response->serverError() || $response->tooManyRequests());
 
             if (! $response->redirect()) {
-                return $this->responseMetadata($response, $page, $isGif);
+                return $this->responseMetadata($response, $page, $previewLink);
             }
 
             $page = $this->redirectPage($response, $page);
@@ -97,7 +93,7 @@ final readonly class UpdateLinkPreview
             url: $page,
             address: $address,
             headers: $this->requestHeaders($isGif),
-            maxBodyBytes: $isGif ? GifLinks::HEADER_BYTES : self::MAX_BODY_BYTES,
+            maxBodyBytes: $isGif ? GifPreviewLink::HEADER_BYTES : HtmlPreviewLink::MAX_BODY_BYTES,
             timeoutSeconds: $remaining,
         );
     }
@@ -119,48 +115,18 @@ final readonly class UpdateLinkPreview
     private function requestHeaders(bool $isGif): array
     {
         if (! $isGif) {
-            return [self::HEADER_ACCEPT => self::HTML_CONTENT_TYPE];
+            return [self::HEADER_ACCEPT => HtmlPreviewLink::CONTENT_TYPE];
         }
 
-        return [self::HEADER_ACCEPT => GifLinks::CONTENT_TYPE, self::HEADER_RANGE => sprintf('bytes=0-%d', GifLinks::HEADER_BYTES - 1)];
+        return [self::HEADER_ACCEPT => GifPreviewLink::CONTENT_TYPE, self::HEADER_RANGE => sprintf('bytes=0-%d', GifPreviewLink::HEADER_BYTES - 1)];
     }
 
-    private function responseMetadata(Response $response, Url $page, bool $isGif): LinkPreviewMetadata
+    private function responseMetadata(Response $response, Url $page, PreviewLink $previewLink): LinkPreviewMetadata
     {
         if (! $response->successful()) {
             return new LinkPreviewMetadata;
         }
 
-        if ($isGif) {
-            return $this->getGifMetadata($response, $page);
-        }
-
-        if (! $this->isHtml($response)) {
-            return new LinkPreviewMetadata;
-        }
-
-        return $this->parser->parse($this->body($response), $page);
-    }
-
-    private function getGifMetadata(Response $response, Url $page): LinkPreviewMetadata
-    {
-        $url = $this->gifLinks->getVerifiedUrl($page, $response->header('Content-Type'), $this->body($response));
-
-        return new LinkPreviewMetadata(gifUrl: $url);
-    }
-
-    private function isHtml(Response $response): bool
-    {
-        $mediaType = mb_strtolower(mb_trim(Str::before($response->header('Content-Type'), ';')));
-
-        return in_array($mediaType, [self::HTML_CONTENT_TYPE, 'application/xhtml+xml'], true);
-    }
-
-    private function body(Response $response): string
-    {
-        $body = $response->toPsrResponse()->getBody();
-        $body->rewind();
-
-        return Utils::copyToString($body, self::MAX_BODY_BYTES);
+        return $previewLink->metadata($response, $page);
     }
 }
