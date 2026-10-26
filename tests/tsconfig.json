@@ -41,6 +41,7 @@
         "Unit/RemotePreferences.test.tsx",
         "Unit/ChatNavigation.test.tsx",
         "../resources/js/types/*.d.ts",
-        "draft-images.config.ts"
+        "draft-images.config.ts",
+        "Mutation/**/*.ts"
     ]
 }
