@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 use App\Dto\LinkPreviewRequest;
-use App\Services\LinkPreviewHttpClient;
+use App\Services\LinkPreviews\LinkPreviewHttpClient;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
 use Symfony\Component\Process\Process;
