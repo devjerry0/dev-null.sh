@@ -216,7 +216,7 @@ Sources: [body renderer](resources/js/components/commit-body.tsx), [colors](reso
 
 ### Draft previews
 
-Use the composer's eye button or **⌘/Ctrl+Shift+P** to preview a commit, reply, or quote before submitting it. Preview shows the rendered code, emoji, mentions, links, and images, and identifies the link selected for a card. Esc returns from preview to writing.
+Use the composer's eye button or **⌘/Ctrl+Shift+P** to preview a commit, reply, or quote. The selected link card also loads while writing; direct GIFs appear after verification. Selected URLs and metadata share the posted-link cache, even if the draft is never published. Uncached links load in the background. Esc returns to writing.
 
 Draft text is not scanned for secrets before publishing or saving locally.
 

@@ -17,6 +17,7 @@ import {
     PreviewToggle,
     useComposerPreview,
 } from '@/components/composer-preview';
+import { DraftLinkPreview } from '@/components/draft-link-preview';
 import InputError from '@/components/input-error';
 import { LinkCardPicker } from '@/components/link-card-picker';
 import { MentionTextarea } from '@/components/mention-textarea';
@@ -285,13 +286,14 @@ function QuoteComposer({
                                 {preview.isPreviewing && (
                                     <ComposerPreviewBody
                                         preview={preview}
-                                        url={linkCard.link}
                                         images={attachments.images}
                                         descriptions={attachments.descriptions}
                                         className="col-start-1 row-start-1 py-1.5"
                                     />
                                 )}
                             </div>
+
+                            <DraftLinkPreview url={linkCard.link} />
 
                             <InputError
                                 message={
