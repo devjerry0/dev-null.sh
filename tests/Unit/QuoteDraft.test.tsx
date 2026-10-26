@@ -2,13 +2,14 @@
 import assert from 'node:assert/strict';
 import * as React from 'react';
 import type { ReactElement, ReactNode } from 'react';
-import { test, vi } from 'vite-plus/test';
+import { afterEach, test, vi } from 'vite-plus/test';
 import type { Commit } from '../../resources/js/types';
 
 const image = new File(['restored'], 'draft.png', { type: 'image/png' });
 const updateImages = vi.fn();
 const drop = vi.fn();
 const user = { id: 'viewer', handle: 'viewer' };
+let isPreviewing = false;
 const draft = {
     key: 'stash:viewer:quote',
     body: 'A restored quote',
@@ -49,7 +50,7 @@ vi.doMock('../../resources/js/components/composer-preview', async () => ({
         '../../resources/js/components/composer-preview',
     )),
     useComposerPreview: () => ({
-        isPreviewing: false,
+        isPreviewing,
         handleShortcut: () => false,
     }),
 }));
@@ -63,6 +64,8 @@ const { StashLabel } =
     await import('../../resources/js/components/stash-label');
 const { LinkCardPicker } =
     await import('../../resources/js/components/link-card-picker');
+const { DraftLinkPreview } =
+    await import('../../resources/js/components/draft-link-preview');
 const { default: InputError } =
     await import('../../resources/js/components/input-error');
 
@@ -79,6 +82,55 @@ function elements(node: ReactNode): ReactElement<Record<string, unknown>>[] {
             elements,
         ),
     ];
+}
+
+afterEach(() => {
+    isPreviewing = false;
+});
+
+for (const previewing of [false, true]) {
+    for (const url of [
+        'https://giphy.com/gifs/JIX9t2j0ZTN9S',
+        'https://images.example.test/cat.gif',
+        null,
+    ]) {
+        test(`quotes keep the selected draft preview for ${url ?? 'no URL'} while ${previewing ? 'previewing' : 'writing'}`, () => {
+            draft.body = url ?? 'A quote without a link';
+            isPreviewing = previewing;
+            const commit = {
+                id: 'quoted',
+                user_id: 'author',
+                user: { handle: 'author' },
+                status: 'approved',
+            } as Commit;
+            const button = CommitQuoteButton({ commit })!;
+            const dialog = React.Children.toArray(
+                button.props.children,
+            )[1] as ReactElement<{
+                children: ReactElement<{ commit: Commit; onClose: () => void }>;
+            }>;
+            const composer = dialog.props.children;
+            const renderComposer = composer.type as (
+                props: typeof composer.props,
+            ) => ReactElement;
+            const form = elements(renderComposer(composer.props)).find(
+                (element) => element.type === Form,
+            )!;
+            const renderFields = form.props.children as (props: {
+                processing: boolean;
+                errors: Record<string, string>;
+            }) => ReactNode;
+            const fields = elements(
+                renderFields({ processing: false, errors: {} }),
+            );
+            const preview = fields.find(
+                (element) => element.type === DraftLinkPreview,
+            );
+
+            assert.ok(preview);
+            assert.equal(preview.props.url, url);
+        });
+    }
 }
 
 test('quotes submit restored images and clear the complete draft only on success or discard', async () => {
