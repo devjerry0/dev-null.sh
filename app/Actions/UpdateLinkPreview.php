@@ -11,6 +11,7 @@ use App\Models\LinkPreview;
 use App\Services\LinkPreviews\LinkPreviewAddress;
 use App\Services\LinkPreviews\LinkPreviewBudget;
 use App\Services\LinkPreviews\LinkPreviewHttpClient;
+use App\Services\PreviewLinkProviders\GifPreviewLink;
 use App\Services\PreviewLinkProviders\HtmlPreviewLink;
 use Illuminate\Http\Client\Response;
 use Uri\WhatWg\Url;
@@ -21,9 +22,12 @@ final readonly class UpdateLinkPreview
 
     private const string HEADER_ACCEPT = 'Accept';
 
+    private const string HEADER_RANGE = 'Range';
+
     public function __construct(
         private LinkPreviewAddress $addresses,
         private LinkPreviewBudget $budget,
+        private GifPreviewLink $gifLinks,
         private LinkPreviewHttpClient $http,
         private HtmlPreviewLink $html,
     ) {
@@ -40,6 +44,8 @@ final readonly class UpdateLinkPreview
     private function fetchMetadata(string $url): LinkPreviewMetadata
     {
         $page = Url::parse($url);
+        $isGif = $this->gifLinks->isGifUrl($page);
+        $previewLink = $isGif ? $this->gifLinks : $this->html;
         $deadline = $this->budget->start();
         $visited = [];
 
@@ -51,7 +57,7 @@ final readonly class UpdateLinkPreview
             }
 
             $visited[$source] = true;
-            $request = $this->prepareRequest($page, $deadline);
+            $request = $this->prepareRequest($page, $isGif, $deadline);
 
             if (! $request instanceof LinkPreviewRequest) {
                 return new LinkPreviewMetadata;
@@ -61,7 +67,7 @@ final readonly class UpdateLinkPreview
             $response->throwIf($response->serverError() || $response->tooManyRequests());
 
             if (! $response->redirect()) {
-                return $this->responseMetadata($response, $page, $this->html);
+                return $this->responseMetadata($response, $page, $previewLink);
             }
 
             $page = $this->redirectPage($response, $page);
@@ -70,8 +76,12 @@ final readonly class UpdateLinkPreview
         return new LinkPreviewMetadata;
     }
 
-    private function prepareRequest(Url $page, float $deadline): ?LinkPreviewRequest
+    private function prepareRequest(Url $page, bool $isGif, float $deadline): ?LinkPreviewRequest
     {
+        if ($isGif && $page->getScheme() !== 'https') {
+            return null;
+        }
+
         $address = $this->addresses->get($page);
         $remaining = $this->budget->remaining($deadline);
 
@@ -82,8 +92,8 @@ final readonly class UpdateLinkPreview
         return new LinkPreviewRequest(
             url: $page,
             address: $address,
-            headers: [self::HEADER_ACCEPT => HtmlPreviewLink::CONTENT_TYPE],
-            maxBodyBytes: HtmlPreviewLink::MAX_BODY_BYTES,
+            headers: $this->requestHeaders($isGif),
+            maxBodyBytes: $isGif ? GifPreviewLink::HEADER_BYTES : HtmlPreviewLink::MAX_BODY_BYTES,
             timeoutSeconds: $remaining,
         );
     }
@@ -97,6 +107,18 @@ final readonly class UpdateLinkPreview
         }
 
         return Url::parse($location, $page);
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function requestHeaders(bool $isGif): array
+    {
+        if (! $isGif) {
+            return [self::HEADER_ACCEPT => HtmlPreviewLink::CONTENT_TYPE];
+        }
+
+        return [self::HEADER_ACCEPT => GifPreviewLink::CONTENT_TYPE, self::HEADER_RANGE => sprintf('bytes=0-%d', GifPreviewLink::HEADER_BYTES - 1)];
     }
 
     private function responseMetadata(Response $response, Url $page, PreviewLink $previewLink): LinkPreviewMetadata
